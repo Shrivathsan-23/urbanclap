@@ -1,72 +1,80 @@
+from datetime import datetime as dt
+
 from flask import Blueprint, jsonify, request
 
 from booking import db
-from booking.models import User, Booking
-from booking.services import find_available_provider, process_payment
+from booking.models import Booking
 
-booking_bp = Blueprint('booking', __name__)
+booking_bp = Blueprint('bookings', __name__, url_prefix = '/bookings')
 
-@booking_bp.route('/bookings', methods = ['GET', 'POST'])
+@booking_bp.route('/', methods = ['POST'])
 def create_booking():
-    if request.method == 'GET':
-        return jsonify({
-            'message': 'GET Request'
-        })
-    
     req_data = request.get_json()
     user_id = req_data.get('user_id')
     service_type = req_data.get('service_type')
-    scheduled_time = req_data.get('scheduled_time')
-
-    user = User.query.get(user_id)
-
-    if not user:
-        return jsonify({
-            'error': 'User not found!'
-        }), 404
-    
-    provider = find_available_provider(service_type, scheduled_time)
-
-    if not provider:
-        return jsonify({
-            'error': 'No available providers for this service'
-        }), 404
+    scheduled_time = dt.strptime(req_data.get('scheduled_time'), '%Y-%m-%d_%H-%M-%S')
     
     booking = Booking(
         user_id = user_id,
-        service_provider_id = provider.id,
         service_type = service_type,
+        status = 0,
         scheduled_time = scheduled_time
     )
     
-    payment_status = process_payment(user_id, service_type)
-
-    if not payment_status:
-        return jsonify({
-            'error': 'Payment Failed'
-        }), 400
+    try:
+        db.session.add(booking)
+        db.session.commit()
     
-    db.session.add(booking)
-    db.session.commit()
-
+    except Exception as e:
+        print(e)
+        
+        return jsonify({
+            'message': 'Booking failed!'
+        }), 500
+    
     return jsonify({
         'message': 'Booking created successfully',
-        'booking_id': booking.id
+        'booking': booking.to_dict()
     }), 201
 
-@booking_bp.route('/bookings/<int:booking_id>', methods = ['GET'])
-def get_booking(booking_id):
-    booking = Booking.query.get(booking_id)
-
-    if not booking:
+@booking_bp.route('/user/<int:user_id>', methods = ['GET'])
+def get_booking_by_user(user_id):
+    user_bookings = Booking.query.filter_by(user_id = user_id).all()
+    
+    if not user_bookings:
         return jsonify({
-            'error': 'Booking not found'
+            'message': 'No booking found for this user!'
         }), 404
     
+    return jsonify([
+        booking.to_dict() for booking in user_bookings
+    ]), 200
+
+@booking_bp.route('/<int:booking_id>', methods = ['PUT'])
+def update_booking(booking_id):
+    req_data = request.get_json()
+    booking = Booking.query.get(booking_id)
+    
+    if not booking:
+        return jsonify({
+            'message': 'Booking not found'
+        }), 404
+    
+    if 'service_provider_id' in req_data:
+        booking.service_provider_id = req_data['service_provider_id']
+    
+    if 'status' in req_data:
+        booking.status = req_data['status']
+    
+    try:
+        db.session.commit()
+    
+    except:
+        return jsonify({
+            'message': 'Booking failed!'
+        }), 500
+    
     return jsonify({
-        'user_id': booking.user_id,
-        'service_provider_id': booking.service_provider_id,
-        'service_type': booking.service_type,
-        'scheduled_time': booking.scheduled_time,
-        'status': booking.status
-    })
+        'message': 'Booking updated successfully!',
+        'booking': booking.to_dict()
+    }), 200
